@@ -1,0 +1,44 @@
+import cv2
+from google.colab.patches import cv2_imshow
+from ultralytics import YOLO
+import matplotlib.pyplot as plt
+
+# 设置中文字体支持
+plt.rcParams["font.family"] = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC"]
+
+def load_yolo_tiny_model():
+    """
+    加载 YOLOv3-tiny 模型
+    """
+    model = YOLO('yolov3-tiny.pt')  # Ultralytics会自动下载模型权重
+    return model
+
+def detect_and_draw(image_path, model, confidence_threshold=0.5):
+    """
+    检测图像中的目标并绘制检测结果
+    """
+    image = cv2.imread(image_path)
+    if image is None:
+        print(f"无法读取图像: {image_path}")
+        return
+
+    results = model(image, conf=confidence_threshold)
+
+    for result in results:
+        annotated_image = result.plot()
+
+    cv2_imshow(annotated_image)
+
+    output_path = f"output_tiny.jpg"
+    cv2.imwrite(output_path, annotated_image)
+    print(f"检测结果已保存至: {output_path}")
+
+
+if __name__ == "__main__":
+    !pip install ultralytics --quiet
+
+    test_image_path = "/测试图片.jpeg"  # 替换为你的图像路径
+
+    print("使用 YOLOv3-tiny 模型检测:")
+    yolo_tiny = load_yolo_tiny_model()
+    detect_and_draw(test_image_path, yolo_tiny, confidence_threshold=0.5)
