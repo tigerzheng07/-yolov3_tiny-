@@ -1,0 +1,237 @@
+import os
+
+# ========== 下载YOLOv3-tiny模型文件 ==========
+yolov3_tiny_dir = "/content/yolov3-tiny"
+if not os.path.exists(yolov3_tiny_dir):
+    os.makedirs(yolov3_tiny_dir)  # 创建目标目录
+
+# 1. 下载配置文件（.cfg）
+!wget https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3-tiny.cfg \
+    -O {yolov3_tiny_dir}/yolov3-tiny.cfg
+
+# 2. 下载权重文件（.weights）
+!wget https://pjreddie.com/media/files/yolov3-tiny.weights \
+    -O {yolov3_tiny_dir}/yolov3-tiny.weights
+
+# 3. 下载COCO类别名文件（.names，与YOLOv3共用）
+!wget https://raw.githubusercontent.com/pjreddie/darknet/master/data/coco.names \
+    -O {yolov3_tiny_dir}/coco.names
+
+print("\n=== YOLOv3-tiny 目录下的文件 ===")
+!ls {yolov3_tiny_dir}
+
+!pip install opencv-python numpy pygame
+!pip install ultralytics --quiet
+
+import cv2
+import numpy as np
+import pygame
+import json
+import time
+from datetime import datetime
+from IPython.display import display, clear_output, Image
+import ipywidgets as widgets
+import threading
+from io import BytesIO
+import PIL.Image
+
+# 颜色配置
+COLORS = {
+    'background': (30, 30, 50),
+    'text': (255, 255, 255),
+    'highlight': (255, 255, 0),
+    'unlocked': (100, 255, 100),
+    'locked': (100, 100, 100),
+    'rarity1': (200, 200, 200),
+    'rarity2': (100, 255, 100),
+    'rarity3': (100, 100, 255)
+}
+
+# 可收集物品
+COLLECTIBLES = {
+    'keyboard': {'name': 'Keyboard', 'rarity': 2, 'desc': 'Input device'},
+    'mouse': {'name': 'Mouse', 'rarity': 2, 'desc': 'Pointing device'},
+    'laptop': {'name': 'Laptop', 'rarity': 3, 'desc': 'Portable computer'},
+    'cell phone': {'name': 'Phone', 'rarity': 2, 'desc': 'Mobile device'},
+    'book': {'name': 'Book', 'rarity': 1, 'desc': 'Reading material'}
+}
+
+import os
+import time
+import json
+import threading
+import cv2
+import numpy as np
+from datetime import datetime
+from ultralytics import YOLO
+from google.colab.patches import cv2_imshow
+
+# 示例收藏物品（你可自行定义）
+COLLECTIBLES = {
+    "person": {"name": "人", "rarity": 1},
+    "bicycle": {"name": "自行车", "rarity": 2},
+    "car": {"name": "汽车", "rarity": 3}
+}
+
+# 颜色映射（rarity等级颜色）
+COLORS = {
+    "rarity1": (0, 255, 0),
+    "rarity2": (0, 165, 255),
+    "rarity3": (0, 0, 255)
+}
+
+class ObjectCollector:
+    def __init__(self):
+        self.model = None
+        self.classes = []
+        self.cap = None
+        self.collection = {}
+        self.is_running = False
+        self.current_frame = None
+        self.load_collection()
+
+    def load_yolo_tiny(self):
+        """加载YOLOv3-tiny模型"""
+        try:
+            self.model = YOLO('yolov3-tiny.pt')  # 自动下载权重
+            self.classes = self.model.names  # 获取类别
+            print("✅ YOLOv3-tiny模型加载成功")
+            return True
+        except Exception as e:
+            print(f"❌ 模型加载失败: {e}")
+            return False
+
+    def init_camera(self):
+        """初始化摄像头"""
+        try:
+            self.cap = cv2.VideoCapture(0)
+            if not self.cap.isOpened():
+                print("❌ 无法打开摄像头")
+                return False
+            print("✅ 摄像头初始化成功")
+            return True
+        except Exception as e:
+            print(f"❌ 摄像头初始化失败: {e}")
+            return False
+
+    def load_collection(self):
+        """加载收集记录"""
+        try:
+            if os.path.exists('collection.json'):
+                with open('collection.json', 'r') as f:
+                    self.collection = json.load(f)
+            else:
+                for item in COLLECTIBLES:
+                    self.collection[item] = {
+                        'collected': False,
+                        'count': 0,
+                        'first_collected': None,
+                        'last_collected': None
+                    }
+            print("✅ 收集记录加载成功")
+        except Exception as e:
+            print(f"❌ 收集记录加载失败: {e}")
+
+    def save_collection(self):
+        """保存收集记录"""
+        try:
+            with open('collection.json', 'w') as f:
+                json.dump(self.collection, f, indent=2)
+        except Exception as e:
+            print(f"❌ 保存失败: {e}")
+
+    def detect_objects(self, frame, confidence_threshold=0.3):
+        """检测物体"""
+        if self.model is None:
+            return frame, []
+
+        results = self.model(frame, conf=confidence_threshold)
+        result_frame = frame.copy()
+        detected_objects = []
+
+        for result in results:
+            boxes = result.boxes.xyxy.cpu().numpy() if hasattr(result.boxes, 'xyxy') else []
+            confidences = result.boxes.conf.cpu().numpy() if hasattr(result.boxes, 'conf') else []
+            class_ids = result.boxes.cls.cpu().numpy().astype(int) if hasattr(result.boxes, 'cls') else []
+
+            for i in range(len(boxes)):
+                x1, y1, x2, y2 = map(int, boxes[i])
+                w, h = x2 - x1, y2 - y1
+                class_id = class_ids[i]
+                class_name = self.classes[class_id]
+                confidence = confidences[i]
+
+                if class_name in COLLECTIBLES:
+                    color = COLORS[f'rarity{COLLECTIBLES[class_name]["rarity"]}']
+                    cv2.rectangle(result_frame, (x1, y1), (x2, y2), color, 2)
+                    label = f"{class_name} {confidence:.2f}"
+                    cv2.putText(result_frame, label, (x1, y1 - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                    detected_objects.append({
+                        'type': class_name,
+                        'confidence': confidence,
+                        'box': [x1, y1, w, h]
+                    })
+
+        return result_frame, detected_objects
+
+    def collect_object(self, obj_type, confidence):
+        """收集物体"""
+        current_time = datetime.now().isoformat()
+        if not self.collection[obj_type]['collected']:
+            self.collection[obj_type]['collected'] = True
+            self.collection[obj_type]['first_collected'] = current_time
+            self.collection[obj_type]['count'] = 1
+            message = f"🎉 新物品收集: {COLLECTIBLES[obj_type]['name']}"
+        else:
+            self.collection[obj_type]['count'] += 1
+            message = f"📦 再次收集: {COLLECTIBLES[obj_type]['name']} (x{self.collection[obj_type]['count']})"
+
+        self.collection[obj_type]['last_collected'] = current_time
+        self.save_collection()
+        return message
+
+    def take_picture(self):
+        """拍照并识别"""
+        if self.current_frame is None:
+            return "❌ 没有可用的摄像头画面"
+
+        result_frame, detected_objects = self.detect_objects(self.current_frame.copy())
+
+        timestamp = int(time.time())
+        os.makedirs("snapshots", exist_ok=True)
+        filename = f"snapshots/snapshot_{timestamp}.jpg"
+        cv2.imwrite(filename, result_frame)
+
+        messages = [f"📸 照片已保存: {filename}"]
+        if detected_objects:
+            best_obj = max(detected_objects, key=lambda x: x['confidence'])
+            if best_obj['confidence'] > 0.4:
+                message = self.collect_object(best_obj['type'], best_obj['confidence'])
+                messages.append(message)
+            else:
+                messages.append("❌ 置信度过低，未收集")
+        else:
+            messages.append("❌ 未检测到可收集物体")
+
+        return "\n".join(messages)
+
+    def start_camera(self):
+        """启动摄像头线程"""
+        def camera_loop():
+            while self.is_running:
+                ret, frame = self.cap.read()
+                if ret:
+                    self.current_frame = frame
+                time.sleep(0.1)
+
+        self.is_running = True
+        self.camera_thread = threading.Thread(target=camera_loop)
+        self.camera_thread.daemon = True
+        self.camera_thread.start()
+
+    def stop_camera(self):
+        """停止摄像头"""
+        self.is_running = False
+        if self.cap:
+            self.cap.release()
